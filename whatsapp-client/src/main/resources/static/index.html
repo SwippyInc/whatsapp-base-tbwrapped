@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Business Integration</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1, h2 {
+            color: #128C7E; /* WhatsApp green */
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #128C7E;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0D6E61;
+        }
+        input, select {
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+        }
+        .status {
+            font-weight: bold;
+            margin: 15px 0;
+        }
+        .status-disconnected { color: #f44336; }
+        .status-connecting { color: #FFC107; }
+        .status-verification_needed { color: #FF9800; }
+        .status-connected { color: #4CAF50; }
+        .status-error { color: #f44336; }
+        .pin-input {
+            display: none;
+        }
+        #messagingPanel {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>WhatsApp Business Integration</h1>
+    
+    <div class="card">
+        <h2>Setup WhatsApp Connection</h2>
+        <div id="connectionForm">
+            <p>Connect your WhatsApp Business account to start messaging your customers.</p>
+            
+            <div>
+                <label for="businessName">Business Name</label>
+                <input type="text" id="businessName" placeholder="Your Business Name" value="Demo Business">
+            </div>
+
+            <div>
+                <label for="tenantId">Tenant ID (Use a valid UUID)</label>
+                <input type="text" id="tenantId" placeholder="e.g. 123e4567-e89b-12d3-a456-426614174000" value="">
+            </div>
+            
+            <button id="connectButton">Connect WhatsApp</button>
+        </div>
+        
+        <div class="status" id="connectionStatus">Status: Not connected</div>
+        
+        <div id="pinInputSection" class="pin-input">
+            <h3>Enter 2-Step Verification PIN</h3>
+            <p>Please enter a 6-digit PIN to secure your WhatsApp Business phone number.</p>
+            <input type="text" id="pinInput" placeholder="6-digit PIN" maxlength="6" pattern="[0-9]{6}">
+            <button id="submitPinButton">Submit PIN</button>
+        </div>
+    </div>
+    
+    <div class="card" id="messagingPanel">
+        <h2>Send Messages</h2>
+        <div>
+            <label for="messageType">Message Type</label>
+            <select id="messageType">
+                <option value="text">Text Message</option>
+                <option value="template">Template Message</option>
+            </select>
+        </div>
+        
+        <div id="textMessageForm">
+            <div>
+                <label for="recipientPhone">Recipient Phone Number</label>
+                <input type="text" id="recipientPhone" placeholder="+1234567890">
+            </div>
+            <div>
+                <label for="messageText">Message</label>
+                <input type="text" id="messageText" placeholder="Hello! This is a text message.">
+            </div>
+            <button id="sendTextButton">Send Message</button>
+        </div>
+        
+        <div id="templateMessageForm" style="display:none;">
+            <!-- Template message form will be shown here -->
+            <div>
+                <label for="templateRecipient">Recipient Phone Number</label>
+                <input type="text" id="templateRecipient" placeholder="+1234567890">
+            </div>
+            <div>
+                <label for="templateName">Template Name</label>
+                <input type="text" id="templateName" placeholder="template_name">
+            </div>
+            <div>
+                <label for="templateLanguage">Language Code</label>
+                <input type="text" id="templateLanguage" placeholder="en_US" value="en_US">
+            </div>
+            <div>
+                <label for="templateParam1">Parameter 1</label>
+                <input type="text" id="templateParam1" placeholder="Parameter value">
+            </div>
+            <button id="sendTemplateButton">Send Template</button>
+        </div>
+        
+        <div id="messageResponse" style="margin-top: 20px;"></div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE_URL = 'https://8055-194-61-40-27.ngrok-free.app';
+        let currentTenantId = '';
+        let pollingInterval = null;
+        
+        // Generate a random UUID for the tenant ID
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        // Initialize the page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set a random UUID as the tenant ID
+            document.getElementById('tenantId').value = generateUUID();
+            
+            // Connect Button
+            document.getElementById('connectButton').addEventListener('click', initializeConnection);
+            
+            // PIN Submit Button
+            document.getElementById('submitPinButton').addEventListener('click', submitPin);
+            
+            // Message Type Selector
+            document.getElementById('messageType').addEventListener('change', function() {
+                if (this.value === 'text') {
+                    document.getElementById('textMessageForm').style.display = 'block';
+                    document.getElementById('templateMessageForm').style.display = 'none';
+                } else {
+                    document.getElementById('textMessageForm').style.display = 'none';
+                    document.getElementById('templateMessageForm').style.display = 'block';
+                }
+            });
+            
+            // Send Text Message Button
+            document.getElementById('sendTextButton').addEventListener('click', sendTextMessage);
+            
+            // Send Template Message Button
+            document.getElementById('sendTemplateButton').addEventListener('click', sendTemplateMessage);
+        });
+        
+        // Initialize WhatsApp Connection
+        function initializeConnection() {
+            const businessName = document.getElementById('businessName').value;
+            currentTenantId = document.getElementById('tenantId').value;
+            
+            if (!businessName || !currentTenantId) {
+                alert('Please enter both Business Name and Tenant ID');
+                return;
+            }
+            
+            if (!isValidUUID(currentTenantId)) {
+                alert('Please enter a valid UUID for Tenant ID');
+                return;
+            }
+            
+            const redirectUri = `${API_BASE_URL}/api/whatsapp/tenant/oauth/callback`;
+            
+            fetch(`${API_BASE_URL}/api/whatsapp/tenant/connect/${currentTenantId}?businessName=${encodeURIComponent(businessName)}&redirectUri=${encodeURIComponent(redirectUri)}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Start polling for status changes
+                    startStatusPolling();
+                    
+                    // Redirect to Facebook OAuth
+                    window.location.href = data.authorizationUrl;
+                } else {
+                    updateStatus('Error: ' + data.message, 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error initializing connection:', error);
+                updateStatus('Error connecting to WhatsApp', 'error');
+            });
+        }
+        
+        // Poll for connection status
+        function startStatusPolling() {
+            // Clear any existing polling
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+            
+            // Check immediately
+            checkConnectionStatus();
+            
+            // Then check every 5 seconds
+            pollingInterval = setInterval(checkConnectionStatus, 5000);
+        }
+        
+        // Check connection status
+        function checkConnectionStatus() {
+            if (!currentTenantId) return;
+            
+            fetch(`${API_BASE_URL}/api/whatsapp/tenant/${currentTenantId}/status`)
+                .then(response => response.json())
+                .then(data => {
+                    const status = data.status;
+                    updateStatus('Status: ' + status, status.toLowerCase());
+                    
+                    // Handle different states
+                    if (status === 'VERIFICATION_NEEDED') {
+                        document.getElementById('pinInputSection').style.display = 'block';
+                    } else {
+                        document.getElementById('pinInputSection').style.display = 'none';
+                    }
+                    
+                    if (status === 'CONNECTED') {
+                        // Enable messaging panel
+                        document.getElementById('messagingPanel').style.display = 'block';
+                        // Stop polling once connected
+                        clearInterval(pollingInterval);
+                    } else {
+                        document.getElementById('messagingPanel').style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking status:', error);
+                });
+        }
+        
+        // Submit PIN for 2-step verification
+        function submitPin() {
+            const pin = document.getElementById('pinInput').value;
+            
+            if (!pin || pin.length !== 6 || !/^\d+$/.test(pin)) {
+                alert('Please enter a valid 6-digit PIN');
+                return;
+            }
+            
+            fetch(`${API_BASE_URL}/api/whatsapp/tenant/${currentTenantId}/register-pin`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ pin })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('PIN registered successfully');
+                    checkConnectionStatus();
+                } else {
+                    alert('Failed to register PIN: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                console.error('Error registering PIN:', error);
+                alert('Error registering PIN');
+            });
+        }
+        
+        // Send a text message
+        function sendTextMessage() {
+            const phone = document.getElementById('recipientPhone').value;
+            const text = document.getElementById('messageText').value;
+            
+            if (!phone || !text) {
+                alert('Please enter both phone number and message');
+                return;
+            }
+            
+            fetch(`${API_BASE_URL}/api/whatsapp/message/${currentTenantId}/text`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    recipientPhone: phone,
+                    text: text
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('messageResponse').innerHTML = 
+                    `<div style="background-color: #e8f5e9; padding: 10px; border-radius: 4px;">
+                        <p><strong>Message sent!</strong></p>
+                        <p>Message ID: ${data.messages ? data.messages[0].id : 'N/A'}</p>
+                    </div>`;
+            })
+            .catch(error => {
+                console.error('Error sending message:', error);
+                document.getElementById('messageResponse').innerHTML = 
+                    `<div style="background-color: #ffebee; padding: 10px; border-radius: 4px;">
+                        <p><strong>Error sending message</strong></p>
+                        <p>${error.message || 'Unknown error'}</p>
+                    </div>`;
+            });
+        }
+        
+        // Send a template message
+        function sendTemplateMessage() {
+            const phone = document.getElementById('templateRecipient').value;
+            const templateName = document.getElementById('templateName').value;
+            const languageCode = document.getElementById('templateLanguage').value;
+            const param1 = document.getElementById('templateParam1').value;
+            
+            if (!phone || !templateName || !languageCode) {
+                alert('Please enter recipient, template name, and language code');
+                return;
+            }
+            
+            const templateBody = {
+                to: phone,
+                template: {
+                    name: templateName,
+                    language: {
+                        code: languageCode
+                    }
+                }
+            };
+            
+            // Add parameters if provided
+            if (param1) {
+                templateBody.template.components = [
+                    {
+                        type: "body",
+                        parameters: [
+                            {
+                                type: "text",
+                                text: param1
+                            }
+                        ]
+                    }
+                ];
+            }
+            
+            fetch(`${API_BASE_URL}/api/whatsapp/message/${currentTenantId}/template`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(templateBody)
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('messageResponse').innerHTML = 
+                    `<div style="background-color: #e8f5e9; padding: 10px; border-radius: 4px;">
+                        <p><strong>Template message sent!</strong></p>
+                        <p>Message ID: ${data.messages ? data.messages[0].id : 'N/A'}</p>
+                    </div>`;
+            })
+            .catch(error => {
+                console.error('Error sending template message:', error);
+                document.getElementById('messageResponse').innerHTML = 
+                    `<div style="background-color: #ffebee; padding: 10px; border-radius: 4px;">
+                        <p><strong>Error sending template message</strong></p>
+                        <p>${error.message || 'Unknown error'}</p>
+                    </div>`;
+            });
+        }
+        
+        // Update the status display
+        function updateStatus(text, statusClass) {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = text;
+            
+            // Remove all status classes
+            statusElement.classList.remove(
+                'status-disconnected', 
+                'status-connecting', 
+                'status-verification_needed', 
+                'status-connected', 
+                'status-error'
+            );
+            
+            // Add the current status class
+            if (statusClass) {
+                statusElement.classList.add('status-' + statusClass);
+            }
+        }
+        
+        // Validate UUID format
+        function isValidUUID(uuid) {
+            const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+            return regex.test(uuid);
+        }
+    </script>
+</body>
+</html>
